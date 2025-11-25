@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from config import Config
+from torch.amp import autocast
 
 Transition = namedtuple(
     "Transition", ("state", "action", "next_state", "reward", "done")
@@ -22,12 +23,18 @@ def select_action(state, policy_net, epsilon, n_actions, device):
         with torch.no_grad():
             # More efficient tensor handling with single normalization
             if isinstance(state, torch.Tensor):
-                state_tensor = state.to(device, dtype=torch.float32, non_blocking=True).unsqueeze(0) / 255.0
+                state_tensor = (
+                    state.to(device, dtype=torch.float32, non_blocking=True).unsqueeze(
+                        0
+                    )
+                    / 255.0
+                )
             else:
                 state_tensor = (
                     torch.from_numpy(state)
                     .to(device, dtype=torch.float32, non_blocking=True)
-                    .unsqueeze(0) / 255.0
+                    .unsqueeze(0)
+                    / 255.0
                 )
 
             return policy_net(state_tensor).argmax().item()  # Faster than max(1)[1]
