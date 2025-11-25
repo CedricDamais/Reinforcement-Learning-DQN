@@ -1,10 +1,11 @@
+from timeit import repeat
+import ale_py
 from collections import deque
-
 import gymnasium as gym
 import numpy as np
 from gymnasium.wrappers import (
     FrameStackObservation,
-    GrayScaleObservation,
+    GrayscaleObservation,
     ResizeObservation,
 )
 
@@ -35,16 +36,16 @@ class MaxAndSkipEnv(gym.Wrapper):
         return max_frame, total_reward, done, truncated, info
 
 
-def make_env(env_name):
+def make_env(env_name, render_mode="rgb_array"):
     """
     Applies the specific preprocessing steps from Section 4.1.
     1. Grayscale (Source [156])
     2. Resize to 84x84 (Source [157])
     3. Stack 4 Frames (Source [159])
     """
-    env = gym.make(env_name, render_mode="rgb_array")
+    env = gym.make(env_name, render_mode=render_mode, repeat_action_probability=0.0)
     env = MaxAndSkipEnv(env, skip=4)  # Source [187]
-    env = GrayScaleObservation(env, keep_dim=False)  # Source [156]
+    env = GrayscaleObservation(env, keep_dim=False)  # Source [156]
     env = ResizeObservation(env, (84, 84))  # Source [157]
     env = FrameStackObservation(env, stack_size=4)  # Source [159]
     return env

@@ -14,6 +14,8 @@ class Config:
     MEMORY_SIZE = 1000000  # Source [183]
     LR = 0.00025  # Standard RMSProp learning rate
     TARGET_UPDATE_FREQ = 10000  # How often to update the fixed target parameters
+    LEARNING_FREQ = 4  # How often to perform gradient updates (every N steps)
+    VALIDATION_FREQ = 5000  # How often to compute validation metrics
     TOTAL_FRAMES = 10000000  # Source [183]
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")

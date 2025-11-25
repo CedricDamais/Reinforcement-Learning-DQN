@@ -11,4 +11,6 @@ dependencies = [
     "ale-py",
     "autorom[accept-rom-license]",
     "matplotlib>=3.10.7",
+    "opencv-python>=4.11.0.86",
+    "tqdm>=4.67.1",
 ]
