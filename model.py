@@ -28,8 +28,7 @@ class DQN(nn.Module):
         self.fc2 = nn.Linear(256, n_actions)
 
     def forward(self, x):
-        x = x.float() / 255.0
-
+        # Input is already normalized in data pipeline
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
 

@@ -14,23 +14,23 @@ Transition = namedtuple(
 def select_action(state, policy_net, epsilon, n_actions, device):
     """
     Selects action using epsilon-greedy policy[cite: 120].
+    Optimized for faster inference.
     """
     if random.random() < epsilon:
         return random.randrange(n_actions)  # Explore
     else:
         with torch.no_grad():
-            # convert state to tensor on device, normalize if integer image type
+            # More efficient tensor handling with single normalization
             if isinstance(state, torch.Tensor):
-                s = state
+                state_tensor = state.to(device, dtype=torch.float32, non_blocking=True).unsqueeze(0) / 255.0
             else:
-                s = torch.as_tensor(state)
+                state_tensor = (
+                    torch.from_numpy(state)
+                    .to(device, dtype=torch.float32, non_blocking=True)
+                    .unsqueeze(0) / 255.0
+                )
 
-            if not s.is_floating_point():
-                s = s.float() / 255.0
-
-            state_tensor = s.to(device).unsqueeze(0)
-            q_values = policy_net(state_tensor)
-            return q_values.max(1)[1].item()  # Exploit
+            return policy_net(state_tensor).argmax().item()  # Faster than max(1)[1]
 
 
 def optimize_model(policy_net, target_net, memory, optimizer, device, scaler=None):
@@ -44,18 +44,27 @@ def optimize_model(policy_net, target_net, memory, optimizer, device, scaler=Non
     batch = Transition(*zip(*transitions))
 
     # Optimized tensor creation - batch operations
-    state_batch = torch.stack(batch.state).to(device=device, dtype=torch.float32) / 255.0
-    action_batch = torch.tensor(batch.action, device=device, dtype=torch.long).unsqueeze(1)
+    state_batch = (
+        torch.stack(batch.state).to(device=device, dtype=torch.float32) / 255.0
+    )
+    action_batch = torch.tensor(
+        batch.action, device=device, dtype=torch.long
+    ).unsqueeze(1)
     reward_batch = torch.tensor(batch.reward, device=device, dtype=torch.float32)
 
     # Handle final states (where next_state is None) - more efficiently
-    non_final_mask = torch.tensor([s is not None for s in batch.next_state], 
-                                device=device, dtype=torch.bool)
+    non_final_mask = torch.tensor(
+        [s is not None for s in batch.next_state], device=device, dtype=torch.bool
+    )
     non_final_next_states_list = [s for s in batch.next_state if s is not None]
-    
+
     if non_final_next_states_list:
-        non_final_next_states = torch.stack(non_final_next_states_list).to(
-            device=device, dtype=torch.float32) / 255.0
+        non_final_next_states = (
+            torch.stack(non_final_next_states_list).to(
+                device=device, dtype=torch.float32
+            )
+            / 255.0
+        )
     else:
         # create an empty float tensor with the correct channel/shape
         non_final_next_states = torch.empty(
@@ -65,15 +74,20 @@ def optimize_model(policy_net, target_net, memory, optimizer, device, scaler=Non
     # Mixed precision forward pass
     if scaler is not None:
         from torch.amp import autocast
-        with autocast('cuda'):
+
+        with autocast("cuda"):
             # 1. Compute Q(s, a) using Policy Net
             current_q_values = policy_net(state_batch).gather(1, action_batch)
 
             # 2. Compute Max Q(s', a') using Target Net (Bellman Equation)
-            next_state_values = torch.zeros(Config.BATCH_SIZE, device=device, dtype=torch.float16)
+            next_state_values = torch.zeros(
+                Config.BATCH_SIZE, device=device, dtype=torch.float16
+            )
             with torch.no_grad():
                 if len(non_final_next_states) > 0:
-                    next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0]
+                    next_state_values[non_final_mask] = target_net(
+                        non_final_next_states
+                    ).max(1)[0]
 
             # Compute Target: y = r + gamma * max Q
             expected_q_values = (next_state_values * Config.GAMMA) + reward_batch
@@ -96,10 +110,14 @@ def optimize_model(policy_net, target_net, memory, optimizer, device, scaler=Non
         current_q_values = policy_net(state_batch).gather(1, action_batch)
 
         # 2. Compute Max Q(s', a') using Target Net (Bellman Equation)
-        next_state_values = torch.zeros(Config.BATCH_SIZE, device=device, dtype=torch.float32)
+        next_state_values = torch.zeros(
+            Config.BATCH_SIZE, device=device, dtype=torch.float32
+        )
         with torch.no_grad():
             if len(non_final_next_states) > 0:
-                next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0]
+                next_state_values[non_final_mask] = target_net(
+                    non_final_next_states
+                ).max(1)[0]
 
         # Compute Target: y = r + gamma * max Q
         expected_q_values = (next_state_values * Config.GAMMA) + reward_batch

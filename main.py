@@ -3,6 +3,7 @@ import torch
 import torch.optim as optim
 from torch.amp import GradScaler
 from tqdm import tqdm
+from collections import deque
 from model import DQN
 from config import Config
 from algo import select_action, optimize_model
@@ -65,10 +66,17 @@ def train():
     episode_rewards = []
     average_q_values = []
 
+    # Tracking variables for better monitoring
+    recent_rewards = deque(maxlen=100)  # Last 100 episodes for moving average
     steps_done = 0
-    episode_rewards = []
+
+    def get_vram_usage():
+        if Config.DEVICE.type == "cuda":
+            return f"VRAM: {torch.cuda.memory_allocated() / 1024**3:.2f}GB/{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f}GB"
+        return "CPU mode"
 
     print(f"Starting training on {Config.ENV_NAME} with {Config.DEVICE}...")
+    print(f"Initial {get_vram_usage()}")
 
     pbar = tqdm(total=Config.TOTAL_FRAMES)
     while steps_done < Config.TOTAL_FRAMES:
@@ -108,8 +116,11 @@ def train():
 
             state = next_state
 
-            # Only train every LEARNING_FREQ steps
-            if steps_done % Config.LEARNING_FREQ == 0:
+            # Adaptive learning frequency: train less often as agent gets better (epsilon decreases)
+            adaptive_learning_freq = max(
+                Config.LEARNING_FREQ, int(Config.LEARNING_FREQ * (2 - epsilon))
+            )
+            if steps_done % adaptive_learning_freq == 0:
                 optimize_model(
                     policy_net, target_net, memory, optimizer, Config.DEVICE, scaler
                 )
@@ -120,6 +131,14 @@ def train():
                     avg_q = q_values.max(1)[0].mean().item()
                     average_q_values.append(avg_q)
 
+                    # Periodic detailed logging
+                    avg_reward_100 = (
+                        np.mean(recent_rewards) if len(recent_rewards) >= 10 else 0
+                    )
+                    print(
+                        f"\\n[Step {steps_done}] Avg Q-value: {avg_q:.3f}, Avg Reward (100ep): {avg_reward_100:.2f}, {get_vram_usage()}"
+                    )
+
             if steps_done % Config.TARGET_UPDATE_FREQ == 0:
                 target_net.load_state_dict(policy_net.state_dict())
                 torch.save(policy_net.state_dict(), "policy_net.pth")
@@ -128,9 +147,22 @@ def train():
             pbar.update(1)
             if done:
                 episode_rewards.append(episode_reward)
-                pbar.set_description(
-                    f"Step {steps_done}, Reward: {episode_reward}, Epsilon: {epsilon:.2f}"
+                recent_rewards.append(episode_reward)
+
+                # Calculate running average of last 100 episodes
+                avg_reward = (
+                    np.mean(recent_rewards) if recent_rewards else episode_reward
                 )
+
+                # Enhanced logging with average reward and VRAM
+                if len(recent_rewards) >= 10:  # Only show avg after some episodes
+                    pbar.set_description(
+                        f"Step {steps_done}, Reward: {episode_reward:.1f}, Avg100: {avg_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
+                    )
+                else:
+                    pbar.set_description(
+                        f"Step {steps_done}, Reward: {episode_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
+                    )
                 break
     pbar.close()
     torch.save(policy_net.state_dict(), "policy_net.pth")
