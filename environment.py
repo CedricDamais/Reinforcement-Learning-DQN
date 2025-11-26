@@ -36,16 +36,82 @@ class MaxAndSkipEnv(gym.Wrapper):
         return max_frame, total_reward, done, truncated, info
 
 
-def make_env(env_name, render_mode="rgb_array"):
+class EpisodicLifeEnv(gym.Wrapper):
     """
-    Applies the specific preprocessing steps from Section 4.1.
-    1. Grayscale (Source [156])
-    2. Resize to 84x84 (Source [157])
-    3. Stack 4 Frames (Source [159])
+    Make end-of-life == end-of-episode, but only reset on true game over.
+    Done by DeepMind for the DQN and co.
     """
-    env = gym.make(env_name, render_mode=render_mode, repeat_action_probability=0.0)
-    env = MaxAndSkipEnv(env, skip=4)  # Source [187]
-    env = GrayscaleObservation(env, keep_dim=False)  # Source [156]
-    env = ResizeObservation(env, (84, 84))  # Source [157]
-    env = FrameStackObservation(env, stack_size=4)  # Source [159]
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.lives = 0
+        self.was_real_done = True
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
+        self.was_real_done = done
+
+        lives = info.get("lives", 0)
+        if lives < self.lives and lives > 0:
+            # A life was lost, but the game is not over.
+            # We signal 'terminated' to the agent so it learns this is bad/end of segment.
+            terminated = True
+
+        self.lives = lives
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, **kwargs):
+        if self.was_real_done:
+            obs, info = self.env.reset(**kwargs)
+        else:
+            # If we are here, it means the agent "finished" an episode because it lost a life,
+            # but the environment is not actually done. We need to continue.
+            # Usually, we just step with 'NOOP' (0) to advance.
+            obs, _, terminated, truncated, info = self.env.step(0)
+            if terminated or truncated:
+                obs, info = self.env.reset(**kwargs)
+
+        self.lives = info.get("lives", 0)
+        return obs, info
+
+
+class FireResetEnv(gym.Wrapper):
+    """
+    Take action on reset for environments that are fixed until firing.
+    """
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        # Fire action is usually 1
+        obs, _, terminated, truncated, info = self.env.step(1)
+        if terminated or truncated:
+            obs, info = self.env.reset(**kwargs)
+        return obs, info
+
+
+def make_env(env_name, render_mode="rgb_array", difficulty=0, mode=0):
+    """
+    Applies the specific preprocessing steps from Section 4.1. of the DQN paper:
+    1. Grayscale
+    2. Resize to 84x84
+    3. Stack 4 Frames
+    """
+    env = gym.make(
+        env_name,
+        render_mode=render_mode,
+        difficulty=difficulty,
+        mode=mode,
+        repeat_action_probability=0.0,
+    )
+    env = MaxAndSkipEnv(env, skip=4)
+    env = EpisodicLifeEnv(env)
+
+    # Only apply FireResetEnv if the action space implies it (usually action 1 is FIRE)
+    if "FIRE" in env.unwrapped.get_action_meanings():
+        env = FireResetEnv(env)
+
+    env = GrayscaleObservation(env, keep_dim=False)
+    env = ResizeObservation(env, (84, 84))
+    env = FrameStackObservation(env, stack_size=4)
     return env

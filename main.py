@@ -1,15 +1,12 @@
+from collections import deque
+
 import numpy as np
 import torch
-import torch.optim as optim
-from torch.amp import GradScaler
 from tqdm import tqdm
-from collections import deque
-from model import DQN
+
+from agent import DQNAgent
 from config import Config
-from algo import select_action, optimize_model
 from environment import make_env
-from data.replay_memory import ReplayMemory
-from data.memory import Memory
 
 
 def train():
@@ -17,47 +14,25 @@ def train():
     print("Populating initial memory for validation set...")
     n_actions = env.action_space.n
 
-    policy_net = DQN((4, 84, 84), n_actions).to(Config.DEVICE)
-    target_net = DQN((4, 84, 84), n_actions).to(Config.DEVICE)
-    target_net.load_state_dict(policy_net.state_dict())
-    target_net.eval()
+    # Initialize Agent
+    agent = DQNAgent((4, 84, 84), n_actions, Config.DEVICE)
 
-    optimizer = optim.RMSprop(
-        policy_net.parameters(), lr=Config.LR, alpha=0.95, eps=0.01
-    )
-    # Mixed precision training for faster computation
-    scaler = GradScaler("cuda") if Config.DEVICE.type == "cuda" else None
-    memory = ReplayMemory(Config.MEMORY_SIZE)
-
+    # Populate memory with random actions
     state, _ = env.reset()
     state = np.array(state)
-    for _ in range(100):  # Play 100 random steps
+    for _ in range(100):
         action = env.action_space.sample()
-
         next_state, reward, terminated, truncated, _ = env.step(action)
         next_state = np.array(next_state)
         done = terminated or truncated
 
         store_state = None if done else next_state
-        state_int8 = torch.tensor(state, dtype=torch.uint8, device="cpu")
-        next_state_int8 = (
-            None
-            if store_state is None
-            else torch.tensor(store_state, dtype=torch.uint8, device="cpu")
-        )
+        agent.push_memory(state, action, store_state, reward, done)
 
-        memory.push(
-            Memory(
-                state=state_int8,
-                action=int(action),
-                next_state=next_state_int8,
-                reward=float(reward),
-                done=bool(done),
-            )
-        )
         state = next_state if not done else np.array(env.reset()[0])
 
-    validation_samples = memory.sample(32)
+    # Create validation set
+    validation_samples = agent.memory.sample(32)
     validation_states = (
         torch.stack([x.state for x in validation_samples]).float().to(Config.DEVICE)
         / 255.0
@@ -65,9 +40,7 @@ def train():
 
     episode_rewards = []
     average_q_values = []
-
-    # Tracking variables for better monitoring
-    recent_rewards = deque(maxlen=100)  # Last 100 episodes for moving average
+    recent_rewards = deque(maxlen=100)
     steps_done = 0
 
     def get_vram_usage():
@@ -79,6 +52,8 @@ def train():
     print(f"Initial {get_vram_usage()}")
 
     pbar = tqdm(total=Config.TOTAL_FRAMES)
+    game_reward = 0  # Accumulator for the full game score (across lives)
+
     while steps_done < Config.TOTAL_FRAMES:
         state, _ = env.reset()
         state = np.array(state)
@@ -92,82 +67,72 @@ def train():
                 * min(1.0, steps_done / Config.EPS_DECAY_FRAMES),
             )
 
-            action = select_action(state, policy_net, epsilon, n_actions, Config.DEVICE)
+            action = agent.select_action(state, epsilon)
 
-            next_state, reward, done, _, _ = env.step(action)
+            next_state, reward, done, _, info = env.step(action)
             next_state = np.array(next_state)
             episode_reward += reward
+            game_reward += reward
 
-            # More efficient tensor creation - avoid repeated conversions
-            state_tensor = torch.from_numpy(state).to(dtype=torch.uint8)
-            next_state_tensor = (
-                None if done else torch.from_numpy(next_state).to(dtype=torch.uint8)
-            )
-
-            memory.push(
-                Memory(
-                    state=state_tensor,
-                    action=int(action),
-                    next_state=next_state_tensor,
-                    reward=float(reward),
-                    done=bool(done),
-                )
-            )
+            store_state = None if done else next_state
+            agent.push_memory(state, action, store_state, reward, done)
 
             state = next_state
 
-            # Adaptive learning frequency: train less often as agent gets better (epsilon decreases)
             adaptive_learning_freq = max(
                 Config.LEARNING_FREQ, int(Config.LEARNING_FREQ * (2 - epsilon))
             )
+
             if steps_done % adaptive_learning_freq == 0:
-                optimize_model(
-                    policy_net, target_net, memory, optimizer, Config.DEVICE, scaler
-                )
+                agent.optimize_model()
 
             if steps_done % Config.VALIDATION_FREQ == 0:
                 with torch.no_grad():
-                    q_values = policy_net(validation_states)
+                    q_values = agent.policy_net(validation_states)
                     avg_q = q_values.max(1)[0].mean().item()
                     average_q_values.append(avg_q)
 
-                    # Periodic detailed logging
                     avg_reward_100 = (
                         np.mean(recent_rewards) if len(recent_rewards) >= 10 else 0
                     )
                     print(
-                        f"\\n[Step {steps_done}] Avg Q-value: {avg_q:.3f}, Avg Reward (100ep): {avg_reward_100:.2f}, {get_vram_usage()}"
+                        f"\n[Step {steps_done}] Avg Q-value: {avg_q:.3f}, Avg Game Reward (100 games): {avg_reward_100:.2f}, {get_vram_usage()}"
                     )
 
             if steps_done % Config.TARGET_UPDATE_FREQ == 0:
-                target_net.load_state_dict(policy_net.state_dict())
-                torch.save(policy_net.state_dict(), "policy_net.pth")
+                agent.update_target_network()
+                agent.save("policy_net.pth")
 
             steps_done += 1
             pbar.update(1)
+
             if done:
-                episode_rewards.append(episode_reward)
-                recent_rewards.append(episode_reward)
+                # Check if it's a real game over (0 lives left)
+                lives = info.get("lives", 0)
+                if lives == 0:
+                    episode_rewards.append(game_reward)
+                    recent_rewards.append(game_reward)
 
-                # Calculate running average of last 100 episodes
-                avg_reward = (
-                    np.mean(recent_rewards) if recent_rewards else episode_reward
-                )
+                    avg_reward = (
+                        np.mean(recent_rewards) if recent_rewards else game_reward
+                    )
 
-                # Enhanced logging with average reward and VRAM
-                if len(recent_rewards) >= 10:  # Only show avg after some episodes
-                    pbar.set_description(
-                        f"Step {steps_done}, Reward: {episode_reward:.1f}, Avg100: {avg_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
-                    )
-                else:
-                    pbar.set_description(
-                        f"Step {steps_done}, Reward: {episode_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
-                    )
+                    if len(recent_rewards) >= 10:
+                        pbar.set_description(
+                            f"Step {steps_done}, Game Reward: {game_reward:.1f}, Avg100: {avg_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
+                        )
+                    else:
+                        pbar.set_description(
+                            f"Step {steps_done}, Game Reward: {game_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
+                        )
+
+                    game_reward = 0  # Reset for the next game
+
                 break
-    pbar.close()
-    torch.save(policy_net.state_dict(), "policy_net.pth")
-    print("Model saved to policy_net.pth")
 
+    pbar.close()
+    agent.save("policy_net.pth")
+    print("Model saved to policy_net.pth")
     env.close()
 
 

@@ -17,7 +17,6 @@ class DQN(nn.Module):
 
         self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2)
 
-        # Calculation for linear layer input:
         # Input: 84x84
         # Conv1: (84-8)/4 + 1 = 20
         # Conv2: (20-4)/2 + 1 = 9
