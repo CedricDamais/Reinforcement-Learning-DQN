@@ -24,7 +24,7 @@ def play():
 
     policy_net = DQN((4, 84, 84), n_actions).to(device)
 
-    state_dict = torch.load("policy_net.pth", map_location=device)
+    state_dict = torch.load("results/pong/policy_net.pth", map_location=device)
     policy_net.load_state_dict(state_dict)
     policy_net.eval()  # Set to evaluation mode that super important to disable dropout/batchnorm
 
@@ -34,11 +34,15 @@ def play():
     current_game_score = 0
     state, _ = env.reset()
     state = np.array(state)
+    epsilon = 0.05
 
     while games_played < 5:
-        with torch.no_grad():
-            state_tensor = torch.tensor(state, device=device).unsqueeze(0) / 255.0
-            action = policy_net(state_tensor).max(1)[1].item()
+        if np.random.random() > epsilon:
+            with torch.no_grad():
+                state_tensor = torch.tensor(state, device=device).unsqueeze(0) / 255.0
+                action = policy_net(state_tensor).max(1)[1].item()
+        else:
+            action = np.random.randint(n_actions)
 
         next_state, reward, done, _, info = env.step(action)
         next_state = np.array(next_state)
