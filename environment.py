@@ -40,6 +40,17 @@ class EpisodicLifeEnv(gym.Wrapper):
     """
     Make end-of-life == end-of-episode, but only reset on true game over.
     Done by DeepMind for the DQN and co.
+        self.lives = 0
+        self.was_real_done = True
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        done = terminated or truncated
+        self.was_real_done = done
+
+        lives = info.get("lives", 0)
+        if lives < self.lives and lives > 0:
+            # A life was lost, but the game is n
     """
 
     def __init__(self, env):

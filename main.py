@@ -1,8 +1,10 @@
 from collections import deque
+import time
 
 import numpy as np
 import torch
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 
 from agent import DQNAgent
 from config import Config
@@ -17,6 +19,9 @@ def train():
     # Initialize Agent
     agent = DQNAgent((4, 84, 84), n_actions, Config.DEVICE)
 
+    # TensorBoard writer
+    writer = SummaryWriter(log_dir=f"runs/{Config.ENV_NAME}_{int(time.time())}")
+
     # Populate memory with random actions
     state, _ = env.reset()
     state = np.array(state)
@@ -26,17 +31,13 @@ def train():
         next_state = np.array(next_state)
         done = terminated or truncated
 
-        store_state = None if done else next_state
-        agent.push_memory(state, action, store_state, reward, done)
+        # EfficientReplayMemory expects single frames; agent.push_memory handles extracting last frame
+        agent.push_memory(state, action, reward, done)
 
         state = next_state if not done else np.array(env.reset()[0])
 
-    # Create validation set
-    validation_samples = agent.memory.sample(32)
-    validation_states = (
-        torch.stack([x.state for x in validation_samples]).float().to(Config.DEVICE)
-        / 255.0
-    )
+    # Create validation set (EfficientReplayMemory returns tensors already normalized on the device)
+    validation_states, _, _, _, _ = agent.memory.sample(32)
 
     episode_rewards = []
     average_q_values = []
@@ -74,8 +75,7 @@ def train():
             episode_reward += reward
             game_reward += reward
 
-            store_state = None if done else next_state
-            agent.push_memory(state, action, store_state, reward, done)
+            agent.push_memory(state, action, reward, done)
 
             state = next_state
 
@@ -84,13 +84,16 @@ def train():
             )
 
             if steps_done % adaptive_learning_freq == 0:
-                agent.optimize_model()
+                loss = agent.optimize_model()
+                if loss is not None:
+                    writer.add_scalar("Train/Loss", loss, steps_done)
 
             if steps_done % Config.VALIDATION_FREQ == 0:
                 with torch.no_grad():
                     q_values = agent.policy_net(validation_states)
                     avg_q = q_values.max(1)[0].mean().item()
                     average_q_values.append(avg_q)
+                    writer.add_scalar("Train/AvgQ", avg_q, steps_done)
 
                     avg_reward_100 = (
                         np.mean(recent_rewards) if len(recent_rewards) >= 10 else 0
@@ -126,11 +129,14 @@ def train():
                             f"Step {steps_done}, Game Reward: {game_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
                         )
 
+                    # Log the per-game reward as an episode metric
+                    writer.add_scalar("Train/EpisodeReward", game_reward, steps_done)
                     game_reward = 0  # Reset for the next game
 
                 break
 
     pbar.close()
+    writer.close()
     agent.save("policy_net.pth")
     print("Model saved to policy_net.pth")
     env.close()
