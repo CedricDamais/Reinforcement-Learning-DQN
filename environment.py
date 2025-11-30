@@ -91,6 +91,20 @@ class FireResetEnv(gym.Wrapper):
         return obs, info
 
 
+class RecordOriginalReward(gym.Wrapper):
+    """
+    Record the original reward returned by the underlying env into the info dict
+    so that later wrappers (e.g., TransformReward) can modify the reward while we
+    still access the unmodified reward for diagnostics/logging.
+    """
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info = dict(info) if info is not None else {}
+        info["original_reward"] = float(reward)
+        return obs, reward, terminated, truncated, info
+
+
 def make_env(env_name, render_mode="rgb_array", difficulty=0, mode=0):
     """
     Applies the specific preprocessing steps from Section 4.1. of the DQN paper:
@@ -111,6 +125,9 @@ def make_env(env_name, render_mode="rgb_array", difficulty=0, mode=0):
     # Only apply FireResetEnv if the action space implies it (usually action 1 is FIRE)
     if "FIRE" in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
+
+    # Record original reward for logging before applying any transforms
+    env = RecordOriginalReward(env)
     # Clip rewards to {-1, 0, +1} using TransformReward with sign function
     env = TransformReward(env, lambda reward: np.sign(reward))
     env = GrayscaleObservation(env, keep_dim=False)

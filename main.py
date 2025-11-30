@@ -54,6 +54,7 @@ def train():
 
     pbar = tqdm(total=Config.TOTAL_FRAMES)
     game_reward = 0  # Accumulator for the full game score (across lives)
+    game_reward_orig = 0  # Accumulate original (pre-clipping) reward for comparison
 
     while steps_done < Config.TOTAL_FRAMES:
         state, _ = env.reset()
@@ -74,6 +75,17 @@ def train():
             next_state = np.array(next_state)
             episode_reward += reward
             game_reward += reward
+            # Log original vs clipped reward per step (throttle to every 10 steps to avoid spamming)
+            if info is not None and "original_reward" in info:
+                orig_r = float(info["original_reward"]) if info["original_reward"] is not None else 0.0
+                game_reward_orig += orig_r
+                if steps_done % 10 == 0:
+                    writer.add_scalar("Train/StepReward/Original", orig_r, steps_done)
+                    writer.add_scalar("Train/StepReward/Clipped", float(reward), steps_done)
+            else:
+                # Fall back to logging clipped-only if original not present
+                if steps_done % 10 == 0:
+                    writer.add_scalar("Train/StepReward/Clipped", float(reward), steps_done)
 
             agent.push_memory(state, action, reward, done)
 
@@ -131,7 +143,9 @@ def train():
 
                     # Log the per-game reward as an episode metric
                     writer.add_scalar("Train/EpisodeReward", game_reward, steps_done)
+                    writer.add_scalar("Train/EpisodeReward/Original", game_reward_orig, steps_done)
                     game_reward = 0  # Reset for the next game
+                    game_reward_orig = 0
 
                 break
 
