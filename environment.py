@@ -7,6 +7,7 @@ from gymnasium.wrappers import (
     FrameStackObservation,
     GrayscaleObservation,
     ResizeObservation,
+    TransformReward,
 )
 
 
@@ -40,17 +41,6 @@ class EpisodicLifeEnv(gym.Wrapper):
     """
     Make end-of-life == end-of-episode, but only reset on true game over.
     Done by DeepMind for the DQN and co.
-        self.lives = 0
-        self.was_real_done = True
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        done = terminated or truncated
-        self.was_real_done = done
-
-        lives = info.get("lives", 0)
-        if lives < self.lives and lives > 0:
-            # A life was lost, but the game is n
     """
 
     def __init__(self, env):
@@ -121,7 +111,8 @@ def make_env(env_name, render_mode="rgb_array", difficulty=0, mode=0):
     # Only apply FireResetEnv if the action space implies it (usually action 1 is FIRE)
     if "FIRE" in env.unwrapped.get_action_meanings():
         env = FireResetEnv(env)
-
+    # Clip rewards to {-1, 0, +1} using TransformReward with sign function
+    env = TransformReward(env, lambda reward: np.sign(reward))
     env = GrayscaleObservation(env, keep_dim=False)
     env = ResizeObservation(env, (84, 84))
     env = FrameStackObservation(env, stack_size=4)
