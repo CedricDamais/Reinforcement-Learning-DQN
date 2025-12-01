@@ -12,15 +12,13 @@
 
 ## Overview
 
-This project implements a Deep Q-Network agent trained to play Atari Breakout from raw pixel inputs. The agent learns optimal policies through experience replay and Q-learning, achieving strong performance on the task.
+This project implements a Deep Q-Network agent trained to play Atari Breakout from raw pixel inputs, based on the seminal work by Mnih et al. (2013). The agent learns optimal policies through experience replay and Q-learning, achieving an average score of 187.67 over 30 evaluation episodes.
 
 **Key Features:**
-- DQN architecture from 2013 NIPS paper (lighter than Nature 2015 version)
-- Efficient memory-optimized replay buffer
-- Frame stacking for temporal information
-- Target network for stable learning
-- Mixed precision training support
-- Comprehensive logging with TensorBoard
+- DQN architecture from 2013 NIPS paper
+- Efficient memory-optimized replay buffer (75% memory reduction)
+- Experience replay for breaking sample correlation
+- Target network for stable Q-learning
 
 ## Project Architecture
 
@@ -66,61 +64,22 @@ FC2: 4 units (Q-values for each action)
 ```
 
 **Why this architecture?**
-- **Smaller network**: Only ~250K parameters vs ~1.7M in Nature DQN
-- **Faster training**: 3-4x speedup in forward/backward passes
-- **Sufficient capacity**: Proven effective on Atari games
-- **Better for limited compute**: Trains well on single GPU
+
+We chose the 2013 NIPS architecture (677K parameters) rather than the 2015 Nature version (1.7M parameters) as it provides sufficient capacity for Breakout while being more efficient to train.
 
 ### Frame Preprocessing
 
-1. **Grayscale conversion**: RGB → grayscale to reduce dimensionality
-2. **Resizing**: 210×160 → 84×84 for computational efficiency
-3. **Frame stacking**: Stack 4 consecutive frames to capture motion
-4. **Normalization**: Pixel values scaled to [0, 1]
+Following the DQN paper, we preprocess frames by converting to grayscale, resizing to 84×84, stacking 4 consecutive frames to capture temporal information, and normalizing pixel values to [0, 1].
 
-## Optimizations
+## Implementation Details
 
-### 1. Efficient Memory Management
+### Efficient Replay Memory
 
-**Problem**: Standard replay buffers store full 4-frame stacks, leading to massive memory usage (4× redundancy).
+Standard replay buffers store complete 4-frame stacks, resulting in 4× memory redundancy. Our `EfficientReplayMemory` stores only individual frames and reconstructs stacks on-the-fly, achieving **75% memory reduction** (11.2 GB → 3.5 GB for 500K capacity). This enables larger replay buffers for better sample diversity, a key factor in DQN's success as described in the original paper.
 
-**Solution**: `EfficientReplayMemory` stores only individual frames and reconstructs stacks on-the-fly:
+### Experience Replay
 
-```python
-# Memory savings:
-# Standard: capacity × 4 × 84 × 84 × 8 bytes = 11.2 GB (for 500K capacity)
-# Efficient: capacity × 1 × 84 × 84 × 1 byte = 3.5 GB (for 500K capacity)
-# Reduction: ~75% memory savings
-```
-
-**Key features:**
-- Single frame storage with dynamic stacking
-- uint8 storage (vs float32) for 4× compression
-- Handles episode boundaries correctly
-- Zero-padding for terminal states
-
-**Why this matters:**
-- Enables larger replay buffers (500K vs 100K transitions)
-- Better sample diversity for training
-- Lower memory bandwidth requirements
-- Allows training on consumer hardware
-
-### 2. Computational Optimizations
-
-**GPU Acceleration:**
-- Batch operations on GPU
-- Asynchronous tensor transfers with `non_blocking=True`
-- Mixed precision training with `GradScaler` (when available)
-
-**Training Efficiency:**
-- Frame skip (4 frames per action) reduces computation
-- Periodic target network updates (every 10K steps)
-- Learning starts after 50K frames for better exploration
-
-**Data Pipeline:**
-- Normalization in forward pass (on GPU)
-- Pre-allocated tensors for batch sampling
-- Efficient numpy operations for memory management
+Following Mnih et al., we use experience replay to break temporal correlations in the training data. Transitions are stored in a replay buffer and sampled uniformly during training, which stabilizes learning and improves data efficiency.
 
 ## Training Details
 
@@ -139,18 +98,7 @@ FC2: 4 units (Q-values for each action)
 
 ### Training Strategy
 
-1. **Exploration Phase** (0-50K frames):
-   - Random actions for initial experience
-   - No learning, only memory population
-
-2. **Learning Phase** (50K-10M frames):
-   - ε-greedy policy with linear decay
-   - Q-learning with experience replay
-   - Periodic target network synchronization
-
-3. **Loss Function**:
-   - Mean Squared Error (MSE) between predicted Q and target Q
-   - Target: Q_target(s,a) = r + γ × max_a' Q(s', a')
+We follow the DQN training procedure: an initial exploration phase (50K frames) populates the replay buffer with random experiences, followed by learning with ε-greedy policy (linear decay from 1.0 to 0.1). The agent optimizes the MSE loss between predicted Q-values and targets computed using a separate target network, updated every 10K steps for stability.
 
 ## Training Results
 
@@ -158,11 +106,7 @@ FC2: 4 units (Q-values for each action)
 
 ![DQN Key Metrics](results/breakout/dqn_key_metrics.png)
 
-The training curves show the evolution of key metrics over 10 million frames:
-- **Average Reward**: Steady improvement from ~0.2 to ~2.0+ per episode
-- **Average Q-value**: Increases from ~0.04 to ~1.5, indicating better value estimation
-- **Epsilon (ε)**: Linear decay from 1.0 to 0.1 over 1M frames, balancing exploration/exploitation
-- **Loss**: Stabilizes after initial learning phase, showing convergence
+The training curves show steady improvement in average reward (~0.2 to 2.0+) and Q-value estimates (~0.04 to 1.5) over 10 million frames, with epsilon linearly decaying from 1.0 to 0.1 and loss stabilizing after the initial learning phase.
 
 ### Model Architecture Metrics
 
@@ -224,38 +168,11 @@ To understand the model's decision-making, we analyzed Q-values across 1000 rand
 | **RIGHT** | 2.34 | 2.15 | [-1.43, 5.81] |
 | **LEFT** | 2.43 | 2.24 | [-1.53, 5.99] |
 
-**Action Preferences** (from 1000 random initial states):
-- **LEFT**: 55.9% (primary paddle movement)
-- **RIGHT**: 29.3% (secondary movement)
-- **NOOP**: 14.8% (waiting/positioning)
-- **FIRE**: 0.0% (not selected in random states)
-
-**Insights:**
-- The agent slightly prefers LEFT movement, possibly due to training biases or brick patterns
-- Q-values are relatively uniform across actions (~2.3-2.4), showing balanced value estimation
-- FIRE action is context-dependent (only useful at game start)
-- Average Max-Q of 2.44 suggests the model estimates modest long-term rewards
+**Action Distribution:** From 1000 random states, the agent prefers LEFT (55.9%), RIGHT (29.3%), and NOOP (14.8%), with FIRE being context-dependent. Q-values are relatively uniform across actions (~2.3-2.4), indicating balanced value estimation with an average Max-Q of 2.44.
 
 ### Analysis
 
-**Strengths:**
-- **Consistent Performance**: Average score of 187.67 shows reliable gameplay
-- **High Ceiling**: Maximum score of 367 demonstrates mastery potential
-- **Learning Success**: Agent clearly learned effective strategies (far above random baseline ~2-5 points)
-
-**Observations:**
-- **Variance**: Standard deviation of 94.64 indicates some instability
-  - Likely due to stochastic game elements (ball physics, brick patterns)
-  - Some episodes have "unlucky" trajectories (scores 19-91)
-- **Multi-modal Distribution**: Two clusters visible:
-  - Lower performance: 19-150 points (early game failures)
-  - Higher performance: 180-367 points (successful strategy execution)
-
-**Why the variance?**
-1. **Game Difficulty**: Breakout requires precise timing; small errors cascade
-2. **Exploration**: 5% ε means occasional suboptimal actions
-3. **Paddle Position**: Initial paddle positioning affects trajectory options
-4. **Brick Layout**: Random brick patterns create varying difficulty
+The agent achieves consistent performance (average 187.67) well above random baseline (~2-5 points), with a maximum of 367 demonstrating strong learned strategies. The variance (σ=94.64) reflects game stochasticity, exploration (ε=0.05), and the difficulty of Breakout's precise timing requirements.
 
 **Comparison to Baselines:**
 - Random agent: ~2-5 points
@@ -269,7 +186,13 @@ Watch our trained DQN agent play Breakout:
 
 ### Video Demonstration
 
-https://github.com/user-attachments/assets/breakout_full_gameplay.mp4
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/breakout_full_gameplay.mp4" controls width="640">
+    Your browser does not support the video tag.
+  </video>
+</div>
+
+Alternatively, view the video directly: [breakout_full_gameplay.mp4](results/breakout/videos/breakout_full_gameplay.mp4)
 
 *Full gameplay video showing 5 consecutive games. Individual episode videos and the concatenated version are available in `results/breakout/videos/`*
 
