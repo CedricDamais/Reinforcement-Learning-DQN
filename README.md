@@ -98,7 +98,7 @@ The training curves show steady improvement in average reward (~0.2 to 2.0+) and
 | **Trainable Parameters** | 677,172 |
 | **Model Size** | 2.59 MB |
 | **Architecture** | 2013 NIPS DQN |
-| **Training Time** | ~5-6 hours (single GPU) |
+| **Training Time** | ~6-7 hours (single GPU very long training :/) |
 
 **Layer-wise breakdown:**
 - Conv1: 16 filters (8×8, stride 4) → 4,096 params (+ 16 bias)
@@ -164,7 +164,7 @@ The agent achieves consistent performance (average 187.67) well above random bas
 
 ## Gameplay Video
 
-Watch my trained DQN agent play Breakout:
+Watch my trained DQN agent play Breakout :) happy about the results:
 
 ###
 
@@ -190,7 +190,7 @@ https://github.com/user-attachments/assets/06630033-9707-4286-847c-e8ba51086ef9
 | Exploration vs exploitation | ε-greedy with linear decay |
 | Target instability | Periodic target network updates (10K steps) |
 
-### Possible Future Improvements
+### Possible Future Improvements ( From other articles I've seen )
 
 - **Double DQN**: Reduce Q-value overestimation
 - **Dueling DQN**: Separate value and advantage streams
