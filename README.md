@@ -1,18 +1,10 @@
 # Deep Q-Network (DQN) for Atari Breakout
 ## Table of Contents
-- [Overview](#overview)
 - [Project Architecture](#project-architecture)
 - [Model Implementation](#model-implementation)
-- [Optimizations](#optimizations)
 - [Training Details](#training-details)
 - [Evaluation Results](#evaluation-results)
 - [Gameplay Video](#gameplay-video)
-- [Installation](#installation)
-- [Usage](#usage)
-
-## Overview
-
-This project implements a Deep Q-Network agent trained to play Atari Breakout from raw pixel inputs, based on the seminal work by Mnih et al. (2013). The agent learns optimal policies through experience replay and Q-learning, achieving an average score of 187.67 over 30 evaluation episodes.
 
 **Key Features:**
 - DQN architecture from 2013 NIPS paper
@@ -70,16 +62,6 @@ We chose the 2013 NIPS architecture (677K parameters) rather than the 2015 Natur
 ### Frame Preprocessing
 
 Following the DQN paper, we preprocess frames by converting to grayscale, resizing to 84×84, stacking 4 consecutive frames to capture temporal information, and normalizing pixel values to [0, 1].
-
-## Implementation Details
-
-### Efficient Replay Memory
-
-Standard replay buffers store complete 4-frame stacks, resulting in 4× memory redundancy. Our `EfficientReplayMemory` stores only individual frames and reconstructs stacks on-the-fly, achieving **75% memory reduction** (11.2 GB → 3.5 GB for 500K capacity). This enables larger replay buffers for better sample diversity, a key factor in DQN's success as described in the original paper.
-
-### Experience Replay
-
-Following Mnih et al., we use experience replay to break temporal correlations in the training data. Transitions are stored in a replay buffer and sampled uniformly during training, which stabilizes learning and improves data efficiency.
 
 ## Training Details
 
@@ -182,35 +164,14 @@ The agent achieves consistent performance (average 187.67) well above random bas
 
 ## Gameplay Video
 
-Watch our trained DQN agent play Breakout:
+Watch my trained DQN agent play Breakout:
 
-### Video Demonstration
+###
 
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/breakout_full_gameplay.mp4" controls width="640">
-    Your browser does not support the video tag.
-  </video>
-</div>
+https://github.com/user-attachments/assets/06630033-9707-4286-847c-e8ba51086ef9
 
-Alternatively, view the video directly: [breakout_full_gameplay.mp4](results/breakout/videos/breakout_full_gameplay.mp4)
+ Video Demonstration
 
-*Full gameplay video showing 5 consecutive games. Individual episode videos and the concatenated version are available in `results/breakout/videos/`*
-
-**To generate and combine gameplay videos:**
-
-```bash
-# 1. Play and record 5 games
-uv run play.py
-
-# 2. Concatenate all episodes into a single video
-python concatenate_videos.py
-
-# Videos saved to: results/breakout/videos/
-# - Individual episodes: breakout_gameplay-episode-0.mp4 through episode-4.mp4
-# - Combined video: breakout_full_gameplay.mp4
-```
-
-The `play.py` script records gameplay using Gymnasium's `RecordVideo` wrapper, and `concatenate_videos.py` uses ffmpeg to stitch all episodes together into a single comprehensive video.
 
 ### What to observe in the video:
 
@@ -219,75 +180,6 @@ The `play.py` script records gameplay using Gymnasium's `RecordVideo` wrapper, a
 3. **Recovery**: Handles difficult angles, fast rebounds, and edge cases effectively
 4. **Score Progression**: Consistent brick clearing patterns with scores ranging from 100-350+
 5. **Consistency**: Demonstrates learned strategy across multiple games with minimal failures
-
-## Installation
-
-### Requirements
-
-- Python 3.9+
-- PyTorch 2.0+
-- Gymnasium (Atari environments)
-- CUDA-capable GPU (recommended)
-
-### Setup
-
-```bash
-# Clone repository
-git clone https://github.com/CedricDamais/Reinforcement-Learning-DQN.git
-cd Reinforcement-Learning-DQN
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Or with uv (recommended)
-uv pip install -r requirements.txt
-```
-
-## Usage
-
-### Training
-
-```bash
-# Train from scratch
-python main.py
-
-# Monitor with TensorBoard
-tensorboard --logdir=runs
-```
-
-### Evaluation
-
-```bash
-# Evaluate trained model
-python evaluate.py
-
-# Results saved to: results/breakout/evaluation_results.txt
-```
-
-### Playing
-
-```bash
-# Watch agent play (with video recording)
-python play.py
-
-# Videos: results/breakout/videos/
-```
-
-### Visualization
-
-```bash
-# Plot training curves
-python visualize.py
-```
-
-## Key Takeaways
-
-### What Worked Well
-
-1. **Efficient Memory**: 75% memory reduction enabled larger buffer → better learning
-2. **Lightweight Architecture**: 2013 NIPS DQN sufficient for Breakout
-3. **Hyperparameter Tuning**: Standard DQN hyperparameters worked well
-4. **Frame Stacking**: Temporal information crucial for motion prediction
 
 ### Challenges & Solutions
 
@@ -298,7 +190,7 @@ python visualize.py
 | Exploration vs exploitation | ε-greedy with linear decay |
 | Target instability | Periodic target network updates (10K steps) |
 
-### Future Improvements
+### Possible Future Improvements
 
 - **Double DQN**: Reduce Q-value overestimation
 - **Dueling DQN**: Separate value and advantage streams
@@ -310,10 +202,6 @@ python visualize.py
 
 - Mnih et al. (2013). "Playing Atari with Deep Reinforcement Learning" [[arXiv:1312.5602](https://arxiv.org/abs/1312.5602)]
 - Mnih et al. (2015). "Human-level control through deep reinforcement learning" [[Nature](https://www.nature.com/articles/nature14236)]
-
-## License
-
-MIT License - see LICENSE file for details.
 
 ## Author
 
