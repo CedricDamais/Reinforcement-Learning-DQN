@@ -1,7 +1,4 @@
 # Deep Q-Network (DQN) for Atari Breakout
-
-
-
 ## Table of Contents
 - [Overview](#overview)
 - [Project Architecture](#project-architecture)
