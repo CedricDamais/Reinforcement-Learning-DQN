@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+import os
+import csv
 
 from agent import DQNAgent
 from config import Config
@@ -21,6 +23,28 @@ def train():
 
     # TensorBoard writer
     writer = SummaryWriter(log_dir=f"runs/{Config.ENV_NAME}_{int(time.time())}")
+    # CSV logging setup
+    csv_dir = writer.log_dir
+    csv_path = os.path.join(csv_dir, "metrics.csv")
+    os.makedirs(csv_dir, exist_ok=True)
+    csv_exists = os.path.exists(csv_path)
+    csv_file = open(csv_path, mode="a", newline="")
+    csv_writer = csv.writer(csv_file)
+    if not csv_exists:
+        csv_writer.writerow(
+            [
+                "step",
+                "frame",
+                "epsilon",
+                "loss",
+                "avg_q",
+                "episode_reward_clipped",
+                "episode_reward_original",
+                "avg100_clipped",
+                "avg100_original",
+                "vram_gb",
+            ]
+        )
 
     # Populate memory with random actions
     state, _ = env.reset()
@@ -42,6 +66,7 @@ def train():
     episode_rewards = []
     average_q_values = []
     recent_rewards = deque(maxlen=100)
+    recent_rewards_orig = deque(maxlen=100)
     steps_done = 0
 
     def get_vram_usage():
@@ -55,6 +80,7 @@ def train():
     pbar = tqdm(total=Config.TOTAL_FRAMES)
     game_reward = 0  # Accumulator for the full game score (across lives)
     game_reward_orig = 0  # Accumulate original (pre-clipping) reward for comparison
+    last_loss = None
 
     while steps_done < Config.TOTAL_FRAMES:
         state, _ = env.reset()
@@ -77,15 +103,23 @@ def train():
             game_reward += reward
             # Log original vs clipped reward per step (throttle to every 10 steps to avoid spamming)
             if info is not None and "original_reward" in info:
-                orig_r = float(info["original_reward"]) if info["original_reward"] is not None else 0.0
+                orig_r = (
+                    float(info["original_reward"])
+                    if info["original_reward"] is not None
+                    else 0.0
+                )
                 game_reward_orig += orig_r
                 if steps_done % 10 == 0:
                     writer.add_scalar("Train/StepReward/Original", orig_r, steps_done)
-                    writer.add_scalar("Train/StepReward/Clipped", float(reward), steps_done)
+                    writer.add_scalar(
+                        "Train/StepReward/Clipped", float(reward), steps_done
+                    )
             else:
                 # Fall back to logging clipped-only if original not present
                 if steps_done % 10 == 0:
-                    writer.add_scalar("Train/StepReward/Clipped", float(reward), steps_done)
+                    writer.add_scalar(
+                        "Train/StepReward/Clipped", float(reward), steps_done
+                    )
 
             agent.push_memory(state, action, reward, done)
 
@@ -98,6 +132,7 @@ def train():
             if steps_done % adaptive_learning_freq == 0:
                 loss = agent.optimize_model()
                 if loss is not None:
+                    last_loss = loss
                     writer.add_scalar("Train/Loss", loss, steps_done)
 
             if steps_done % Config.VALIDATION_FREQ == 0:
@@ -127,23 +162,52 @@ def train():
                 if lives == 0:
                     episode_rewards.append(game_reward)
                     recent_rewards.append(game_reward)
+                    recent_rewards_orig.append(game_reward_orig)
 
                     avg_reward = (
                         np.mean(recent_rewards) if recent_rewards else game_reward
                     )
+                    avg_reward_orig = (
+                        np.mean(recent_rewards_orig)
+                        if recent_rewards_orig
+                        else game_reward_orig
+                    )
 
                     if len(recent_rewards) >= 10:
                         pbar.set_description(
-                            f"Step {steps_done}, Game Reward: {game_reward:.1f}, Avg100: {avg_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
+                            f"Step {steps_done}, Game: {game_reward:.1f} (orig {game_reward_orig:.1f}), Avg100: {avg_reward:.1f} (orig {avg_reward_orig:.1f}), ε: {epsilon:.3f} | {get_vram_usage()}"
                         )
                     else:
                         pbar.set_description(
-                            f"Step {steps_done}, Game Reward: {game_reward:.1f}, ε: {epsilon:.3f} | {get_vram_usage()}"
+                            f"Step {steps_done}, Game: {game_reward:.1f} (orig {game_reward_orig:.1f}), ε: {epsilon:.3f} | {get_vram_usage()}"
                         )
 
                     # Log the per-game reward as an episode metric
                     writer.add_scalar("Train/EpisodeReward", game_reward, steps_done)
-                    writer.add_scalar("Train/EpisodeReward/Original", game_reward_orig, steps_done)
+                    writer.add_scalar(
+                        "Train/EpisodeReward/Original", game_reward_orig, steps_done
+                    )
+                    # Write CSV row for the episode
+                    vram = (
+                        torch.cuda.memory_allocated() / 1024**3
+                        if Config.DEVICE.type == "cuda"
+                        else 0.0
+                    )
+                    csv_writer.writerow(
+                        [
+                            steps_done,
+                            steps_done,  # frame (same as step here)
+                            epsilon,
+                            last_loss if last_loss is not None else "",
+                            avg_q,
+                            float(game_reward),
+                            float(game_reward_orig),
+                            float(avg_reward),
+                            float(avg_reward_orig),
+                            round(float(vram), 4),
+                        ]
+                    )
+                    csv_file.flush()
                     game_reward = 0  # Reset for the next game
                     game_reward_orig = 0
 

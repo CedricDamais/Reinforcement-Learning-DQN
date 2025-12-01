@@ -2,6 +2,7 @@ import random
 import torch
 import sys
 import os
+
 sys.path.insert(0, os.getcwd())
 import numpy as np
 import torch.optim as optim
@@ -23,20 +24,16 @@ class DQNAgent:
         self.device = device
         self.n_actions = n_actions
 
-        # Initialize networks
         self.policy_net = DQN(input_shape, n_actions).to(device)
         self.target_net = DQN(input_shape, n_actions).to(device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
-        # Optimizer and Scaler
         self.optimizer = optim.RMSprop(
             self.policy_net.parameters(), lr=Config.LR, alpha=0.95, eps=0.01
         )
-        # Correct GradScaler initialization
         self.scaler = GradScaler() if device.type == "cuda" else None
 
-        # Memory (efficient single-frame representation)
         self.memory = EfficientReplayMemory(Config.MEMORY_SIZE, device=Config.DEVICE)
 
     def select_action(self, state, epsilon):
@@ -74,7 +71,9 @@ class DQNAgent:
         # Ensure shapes/dtypes
         if action_batch.dim() == 2 and action_batch.shape[1] == 1:
             action_batch = action_batch.squeeze(1)
-        action_batch = action_batch.to(device=self.device, dtype=torch.long).unsqueeze(1)
+        action_batch = action_batch.to(device=self.device, dtype=torch.long).unsqueeze(
+            1
+        )
 
         if reward_batch.dim() == 2 and reward_batch.shape[1] == 1:
             reward_batch = reward_batch.squeeze(1)
@@ -86,9 +85,13 @@ class DQNAgent:
         current_q_values = self.policy_net(state_batch).gather(1, action_batch)
 
         # Compute Max Q(s', a') using Target Net
-        next_state_values = torch.zeros(Config.BATCH_SIZE, device=self.device, dtype=torch.float32)
+        next_state_values = torch.zeros(
+            Config.BATCH_SIZE, device=self.device, dtype=torch.float32
+        )
         with torch.no_grad():
-            next_state_values[~done_mask] = self.target_net(next_state_batch[~done_mask]).max(1)[0]
+            next_state_values[~done_mask] = self.target_net(
+                next_state_batch[~done_mask]
+            ).max(1)[0]
 
         # y = r + gamma * max Q
         expected_q_values = (next_state_values * Config.GAMMA) + reward_batch
@@ -111,7 +114,6 @@ class DQNAgent:
                     param.grad.data.clamp_(-1, 1)
             self.optimizer.step()
 
-        # Return loss for logging
         return loss.item()
 
     def update_target_network(self):
@@ -129,13 +131,11 @@ class DQNAgent:
         Accepts a full state (stack of 4 frames) or a single frame.
         EfficientReplayMemory stores single frames only and will reconstruct stacks on sampling.
         """
-        # state could be a stack (4,H,W) or a single (H,W) frame
         if hasattr(state, "ndim") and state.ndim == 3 and state.shape[0] == 4:
             last_frame = state[-1]
         else:
             last_frame = state
 
-        # Convert to uint8 numpy if needed
         if isinstance(last_frame, torch.Tensor):
             last_frame = last_frame.cpu().numpy()
         if last_frame.dtype != np.uint8:
